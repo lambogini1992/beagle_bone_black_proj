@@ -1,0 +1,46 @@
+1. Install Defen package on host machine:
+    sudo apt-get update
+
+    sudo apt-get install gawk wget git-core diffstat unzip texinfo gcc-multilib \
+    build-essential chrpath socat libsdl1.2-dev xterm
+
+    sudo apt install git bc bison flex libssl-dev make libc6-dev libncurses5-dev
+
+
+2. Follow this link to create OS on SD-Card for Beagle Bone Black
+    https://forum.digikey.com/t/debian-getting-started-with-the-beaglebone-black/12967
+
+
+3. Get Toolchain for cross-compiling application on user space:
+    cd ${BB_TOOLCHAIN_PATH}
+
+    wget -c https://releases.linaro.org/components/toolchain/binaries/6.5-2018.12/arm-linux-gnueabihf/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf.tar.xz
+
+    tar xf gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf.tar.xz
+
+    vi ${HOME}/~.bashrc
+
+    #Add the command in the end of .bashrc file
+    export CROSS_COMPILE_APP= ${BB_TOOLCHAIN_PATH}/gcc-linaro-6.5.0-2018.12-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-
+
+    source ~/.bashrc
+
+    ${CROSS_COMPILE_APP}gcc --version
+
+
+4. Get Toolchain for cross-compiling kernel module:
+
+    cd ${BB_KERNEL_SOURCE} #this directory is create in step 2
+
+    vi ${HOME}/~.bashrc
+
+    #Add the command in the end of .bashrc file
+    export CROSS_COMPILE_KERNEL= ${BB_KERNEL_SOURCE}/kernelbuildscripts/dl/gcc-8.5.0-nolibc/arm-linux-gnueabi/bin/arm-linux-gnueabi-
+
+    source ~/.bashrc
+
+
+
+
+
+
