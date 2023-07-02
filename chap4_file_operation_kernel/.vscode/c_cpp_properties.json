@@ -1,0 +1,30 @@
+{
+    "configurations": [
+        {
+            "name": "linux-gcc-x64",
+            "includePath": [
+                "/home/pta/Documents/beaglebone/kernelbuildscripts/KERNEL",
+                "/home/pta/Documents/beaglebone/kernelbuildscripts/KERNEL/arch/arm/include",
+                "/home/pta/Documents/beaglebone/kernelbuildscripts/KERNEL/arch/arm/include/generated",
+                "/home/pta/Documents/beaglebone/kernelbuildscripts/KERNEL/arch/arm64/include",
+                "${workspaceRoot}",
+                "/home/pta/Documents/beaglebone/kernelbuildscripts/KERNEL/include",
+                "/home/pta/Documents/beaglebone/kernelbuildscripts/KERNEL/arch/alpha/include",
+                "/home/pta/Documents/beaglebone/kernelbuildscripts/KERNEL/arch/alpha/include/uapi",
+                "/home/pta/Documents/beaglebone/kernelbuildscripts/KERNEL/arch/arm/include/generated/uapi"
+            ],
+            "defines": [
+                "__GNUC__",
+                "__KERNEL__"
+            ],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "gnu11",
+            "cppStandard": "gnu++11",
+            "intelliSenseMode": "clang-arm",
+            "compilerArgs": [
+                ""
+            ]
+        }
+    ],
+    "version": 4
+}

@@ -1,0 +1,18 @@
+make -C /home/pta/Documents/beaglebone/kernelbuildscripts/KERNEL ARCH=arm CROSS_COMPILE=/home/pta/Documents/beaglebone/kernelbuildscripts/dl/gcc-8.5.0-nolibc/arm-linux-gnueabi/bin/arm-linux-gnueabi- M=/home/pta/Documents/github/beagle_bone_black_proj/chap4_file_operation_kernel modules
+make[1]: Entering directory '/home/pta/Documents/beaglebone/kernelbuildscripts/KERNEL'
+test -e include/generated/autoconf.h -a -e include/config/auto.conf || (		\
+echo >&2;							\
+echo >&2 "  ERROR: Kernel configuration is invalid.";		\
+echo >&2 "         include/generated/autoconf.h or include/config/auto.conf are missing.";\
+echo >&2 "         Run 'make oldconfig && make prepare' on kernel src to fix it.";	\
+echo >&2 ;							\
+/bin/false)
+make -f ./scripts/Makefile.build obj=/home/pta/Documents/github/beagle_bone_black_proj/chap4_file_operation_kernel \
+single-build= \
+need-builtin=1 need-modorder=1
+{   echo /home/pta/Documents/github/beagle_bone_black_proj/chap4_file_operation_kernel/dev_string.ko; :; } \
+| awk '!x[$0]++' - > /home/pta/Documents/github/beagle_bone_black_proj/chap4_file_operation_kernel/modules.order
+make -f ./scripts/Makefile.modpost
+  sed 's/ko$/o/' /home/pta/Documents/github/beagle_bone_black_proj/chap4_file_operation_kernel/modules.order | scripts/mod/modpost -m  -i ./Module.symvers -I /home/pta/Documents/github/beagle_bone_black_proj/chap4_file_operation_kernel/Module.symvers  -o /home/pta/Documents/github/beagle_bone_black_proj/chap4_file_operation_kernel/Module.symvers     -s -T - vmlinux
+make -f ./scripts/Makefile.modfinal
+make[1]: Leaving directory '/home/pta/Documents/beaglebone/kernelbuildscripts/KERNEL'
