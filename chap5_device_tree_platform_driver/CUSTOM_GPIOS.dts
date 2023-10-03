@@ -1,0 +1,27 @@
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/board/am335x-bone-pins.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/pinctrl/am33xx.h>
+
+&{/chosen} {
+	overlays {
+		CUSTOM_GPIO.kernel = __TIMESTAMP__;
+	};
+};
+
+&ocp {
+    P9_11_pinmux { pinctrl-0 = <&P9_11_gpio_pin>; };
+    P9_13_pinmux { pinctrl-0 = <&P9_13_gpio_pin>; };
+};
+
+&{/} {
+
+	custom_gpio: custome_gpio{
+        compatible = "custome_gpio";
+        output-gpios = <gpio_P9_11 GPIO_ACTIVE_HIGH>;
+        input-gpios = <gpio_P9_13 GPIO_ACTIVE_HIGH>;
+        status = "okay";
+    };
+};
