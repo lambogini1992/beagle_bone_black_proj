@@ -1,0 +1,183 @@
+From 3eb30c70ae30f74e75333a1f3f4cedd46a1bf1ec Mon Sep 17 00:00:00 2001
+From: Your Name <you@example.com>
+Date: Sat, 7 Jun 2025 14:41:46 +0700
+Subject: [PATCH] Modify device tree to enable washare LCD RPI 3.5 inch and 
+ CYW43012 bluetooth
+
+---
+ arch/arm/boot/dts/am335x-boneblack.dts | 154 +++++++++++++++++++++++++
+ 1 file changed, 154 insertions(+)
+
+diff --git a/arch/arm/boot/dts/am335x-boneblack.dts b/arch/arm/boot/dts/am335x-boneblack.dts
+index ea205b720764..0521be4fcf93 100644
+--- a/arch/arm/boot/dts/am335x-boneblack.dts
++++ b/arch/arm/boot/dts/am335x-boneblack.dts
+@@ -31,6 +31,7 @@ oppnitro-1000000000 {
+ 	};
+ };
+ 
++
+ &gpio0 {
+ 	gpio-line-names =
+ 		"[mdio_data]",
+@@ -178,3 +179,156 @@ &gpio3 {
+ &baseboard_eeprom {
+ 	vcc-supply = <&ldo4_reg>;
+ };
++
++/*
++ * Free up the pins used by the cape from the pinmux helpers.
++ */
++ &ocp {
++	P9_23_pinmux { status = "disabled"; };  /* lcd gpio backlight (OPTIONAL) */
++	P9_25_pinmux { status = "disabled"; };	/* lcd reset */
++	P9_27_pinmux { status = "disabled"; };	/* lcd dc */
++	P9_41_pinmux { status = "disabled"; };	/* lcd touch screen */
++	P9_42_pinmux { status = "disabled"; };	/* spi1_cs1 */
++	P9_28_pinmux { status = "disabled"; };	/* spi1_cs0 */
++	P9_29_pinmux { status = "disabled"; };	/* spi1_d0 */
++	P9_30_pinmux { status = "disabled"; };	/* spi1_d1 */
++	P9_31_pinmux { status = "disabled"; };	/* spi1_sclk */
++	P8_37_pinmux { status = "disabled"; };	/* uart5_tx */
++	P8_38_pinmux { status = "disabled"; };	/* uart5_rx */
++	P8_32_pinmux { status = "disabled"; };	/* uart5_rts */
++	P8_31_pinmux { status = "disabled"; };	/* uart5_cts */
++	P8_3_pinmux { status = "disabled"; };	/* BT HOST WAKE */
++	P8_4_pinmux { status = "disabled"; };	/* BT REG ON */
++	P8_5_pinmux { status = "disabled"; };	/* BT DEV WAKE */
++};
++
++&am33xx_pinmux {
++	/* default state has all gpios released and mode set to uart1 */
++	/* See page 1446 of am35xx TRM */
++	bb_spi1_pins: pinmux_bb_spi1_pins {
++		pinctrl-single,pins = <
++			AM33XX_PADCONF(AM335X_PIN_MCASP0_ACLKX, PIN_INPUT, MUX_MODE3)	/* mcasp0_aclkx.spi1_sclk */
++			AM33XX_PADCONF(AM335X_PIN_MCASP0_FSX, PIN_INPUT, MUX_MODE3)	/* mcasp0_fsx.spi1_d0 */
++			AM33XX_PADCONF(AM335X_PIN_MCASP0_AXR0, PIN_INPUT, MUX_MODE3)	/* mcasp0_axr0.spi1_d1 */
++			AM33XX_PADCONF(AM335X_PIN_MCASP0_AHCLKR, PIN_INPUT, MUX_MODE3)	/* mcasp0_ahclkr.spi1_cs0 */
++			AM33XX_PADCONF(AM335X_PIN_ECAP0_IN_PWM0_OUT, PIN_INPUT, MUX_MODE2)	/* eCAP0_in_PWM0_out.spi1_cs1 */
++			AM33XX_PADCONF(AM335X_PIN_MCASP0_FSR, PIN_OUTPUT_PULLUP, MUX_MODE7)	/* gpio, dc */
++			AM33XX_PADCONF(AM335X_PIN_MCASP0_AHCLKX, PIN_OUTPUT_PULLUP, MUX_MODE7)	/* gpio, reset */
++			AM33XX_PADCONF(AM335X_PIN_XDMA_EVENT_INTR1, PIN_OUTPUT_PULLUP, MUX_MODE7)	/* gpio, interrupt GPIO0_7*/
++		>;
++	};
++
++	backligh_gpio_pins: pinmux_backlight_pins {
++		pinctrl-single,pins = <
++			AM33XX_PADCONF(AM335X_PIN_GPMC_A1, PIN_OUTPUT, MUX_MODE7) /* gpmc_a1.gpio_pin_backlight */
++		>;
++	};  /* gpmc_a1.gpio_pin_backlight */
++
++	/* UART pins */
++	bb_uart5_pins: pinmux_bb_uart5_pins {
++		pinctrl-single,pins = <
++			AM33XX_PADCONF(AM335X_PIN_LCD_DATA8, PIN_OUTPUT_PULLUP, MUX_MODE4)	/* gpio_pin_uart5_txd */
++			AM33XX_PADCONF(AM335X_PIN_LCD_DATA9, PIN_INPUT, MUX_MODE4)	/* gpio_pin_uart5_rtx */
++			AM33XX_PADCONF(AM335X_PIN_LCD_DATA14, PIN_INPUT_PULLUP, MUX_MODE6)		/* uart5_ctsn */
++			AM33XX_PADCONF(AM335X_PIN_LCD_DATA15, PIN_OUTPUT_PULLUP, MUX_MODE6)	/* uart5_rtsn */
++		>;
++	};
++
++	bt_pins: pinmux_bt_pins {
++		pinctrl-single,pins = <
++			AM33XX_PADCONF(AM335X_PIN_GPMC_AD6, PIN_INPUT_PULLUP, MUX_MODE7)	/* gpio_pin_bt_host_wake */
++			AM33XX_PADCONF(AM335X_PIN_GPMC_AD7, PIN_OUTPUT_PULLUP, MUX_MODE7)	/* gpio_pin_bt_reg_on */
++			AM33XX_PADCONF(AM335X_PIN_GPMC_AD2, PIN_OUTPUT_PULLUP, MUX_MODE7)	/* gpio_pin_bt_dev_wake */
++		>;
++	};
++
++	touchscreen_pins: pinmux_touchscreen_pins {
++		pinctrl-single,pins = <
++			AM33XX_PADCONF(AM335X_PIN_XDMA_EVENT_INTR1, PIN_INPUT_PULLUP, MUX_MODE7)	/* gpio_pin_touchscreen_irq */
++		>;
++	};
++};
++
++
++&spi1 {
++	#address-cells = <1>;
++	#size-cells = <0>;
++
++	status = "okay";
++	pinctrl-names = "default";
++	pinctrl-0 = <&bb_spi1_pins>;
++
++	ti,pindir-d0-out-d1-in;
++
++	channel@0{
++		status = "disabled";
++		reg = <0>;
++	};
++
++	channel@1{
++		status = "disabled";
++		reg = <1>;
++	};
++
++	display@0{
++		status = "okay";
++		compatible = "ilitek,ili9486", "waveshare,rpi-lcd-35";
++		reg = <0>;
++		spi-max-frequency = <1000000>;
++		dc-gpios    = <&gpio3 19 0>;   // lcd dc    P9.27 gpio3[19]
++		reset-gpios = <&gpio3 21 0>;   // lcd reset P9.25 gpio3[21]
++		backlight = <&backlight_gpio>; // lcd lite  P9.23 gpio1[17]
++		rotation = <0>;
++	};
++
++	touchscreen@1{
++		status = "disabled";
++		pinctrl-names = "default";
++		pinctrl-0 = <&touchscreen_pins>; //touchscreen irq P9.41 gpio0[20]
++		compatible = "ti,ads7846";
++		reg = <1>;
++		spi-max-frequency = <1000000>;
++		interrupt-parent = <&gpio0>;
++		interrupts = <20 IRQ_TYPE_EDGE_FALLING>;
++		pendown-gpio = <&gpio0 20 GPIO_ACTIVE_HIGH>;
++		ti,x-plate-ohms = /bits/ 16 <60>;
++		touchscreen-max-pressure = <255>;
++	};
++};
++
++&uart5 {
++	status = "okay";
++	pinctrl-names = "default";
++	pinctrl-0 = <&bb_uart5_pins>;
++};
++
++
++&{/} {
++	bl_reg: backlight-regulator {
++		compatible = "regulator-fixed";
++		regulator-name = "backlight";
++		regulator-always-on;
++		regulator-boot-on;
++	};
++
++	/* backlight is optional */
++	backlight_gpio: backlight_gpio {
++		pinctrl-names = "default";
++		pinctrl-0 = <&backligh_gpio_pins>;
++		compatible = "gpio-backlight";
++		gpios = <&gpio1 17 GPIO_ACTIVE_HIGH>;
++		// connect lcd lite pin to P9.23 which is gpio1[17]
++		// refer to https://elinux.org/Beagleboard:Cape_Expansion_Headers
++	};
++
++    bluetooth: bluetooth {
++		pinctrl-names = "default";
++		pinctrl-0 = <&bt_pins>;
++        compatible = "brcm,bcm43438-bt"; // Use "brcm,bcm43438-bt" for CYW43xx
++        max-speed = <115200>;
++        shutdown-gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>; // Example: BT_REG_ON
++        device-wakeup-gpios = <&gpio1 2 GPIO_ACTIVE_HIGH>; // Example: BT_DEV_WAKE
++        host-wakeup-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>; // Example: BT_HOST_WAKE
++		status = "okay"; // Disable by default
++    };
++};
+\ No newline at end of file
+-- 
+2.43.0
+

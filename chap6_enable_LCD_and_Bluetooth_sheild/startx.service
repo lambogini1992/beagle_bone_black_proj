@@ -1,0 +1,15 @@
+[Unit]
+Description=Start X at boot
+After=graphical.target
+
+[Service]
+User=debian
+Environment=DISPLAY=:0
+ExecStart=/usr/bin/sudo /usr/bin/startx
+RestartSec=20
+Restart=on-failure
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
