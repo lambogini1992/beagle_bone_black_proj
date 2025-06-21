@@ -1,0 +1,434 @@
+From 5af3e4e90f578fb46f9424f79fffe130fb748f9d Mon Sep 17 00:00:00 2001
+From: Your Name <you@example.com>
+Date: Sat, 21 Jun 2025 15:01:27 +0700
+Subject: [PATCH] Add bluetooth device CYW43012 and Implement bluesleep module
+ like qualcomm
+
+---
+ arch/arm/boot/dts/am335x-boneblack.dts |   7 +-
+ drivers/bluetooth/Makefile             |   1 +
+ drivers/bluetooth/bluesleep.c          | 376 +++++++++++++++++++++++++
+ 3 files changed, 380 insertions(+), 4 deletions(-)
+ create mode 100644 drivers/bluetooth/bluesleep.c
+
+diff --git a/arch/arm/boot/dts/am335x-boneblack.dts b/arch/arm/boot/dts/am335x-boneblack.dts
+index 0521be4fcf93..a47b4d48cee9 100644
+--- a/arch/arm/boot/dts/am335x-boneblack.dts
++++ b/arch/arm/boot/dts/am335x-boneblack.dts
+@@ -237,8 +237,8 @@ AM33XX_PADCONF(AM335X_PIN_LCD_DATA15, PIN_OUTPUT_PULLUP, MUX_MODE6)	/* uart5_rts
+ 	bt_pins: pinmux_bt_pins {
+ 		pinctrl-single,pins = <
+ 			AM33XX_PADCONF(AM335X_PIN_GPMC_AD6, PIN_INPUT_PULLUP, MUX_MODE7)	/* gpio_pin_bt_host_wake */
+-			AM33XX_PADCONF(AM335X_PIN_GPMC_AD7, PIN_OUTPUT_PULLUP, MUX_MODE7)	/* gpio_pin_bt_reg_on */
+-			AM33XX_PADCONF(AM335X_PIN_GPMC_AD2, PIN_OUTPUT_PULLUP, MUX_MODE7)	/* gpio_pin_bt_dev_wake */
++			AM33XX_PADCONF(AM335X_PIN_GPMC_AD7, PIN_OUTPUT, MUX_MODE7)	/* gpio_pin_bt_reg_on */
++			AM33XX_PADCONF(AM335X_PIN_GPMC_AD2, PIN_OUTPUT, MUX_MODE7)	/* gpio_pin_bt_dev_wake */
+ 		>;
+ 	};
+ 
+@@ -324,8 +324,7 @@ backlight_gpio: backlight_gpio {
+     bluetooth: bluetooth {
+ 		pinctrl-names = "default";
+ 		pinctrl-0 = <&bt_pins>;
+-        compatible = "brcm,bcm43438-bt"; // Use "brcm,bcm43438-bt" for CYW43xx
+-        max-speed = <115200>;
++        compatible = "pta,bluesleep"; // Use "brcm,bcm43438-bt" for CYW43xx
+         shutdown-gpios = <&gpio1 7 GPIO_ACTIVE_HIGH>; // Example: BT_REG_ON
+         device-wakeup-gpios = <&gpio1 2 GPIO_ACTIVE_HIGH>; // Example: BT_DEV_WAKE
+         host-wakeup-gpios = <&gpio1 6 GPIO_ACTIVE_HIGH>; // Example: BT_HOST_WAKE
+diff --git a/drivers/bluetooth/Makefile b/drivers/bluetooth/Makefile
+index 16286ea2655d..9abe48d13c0b 100644
+--- a/drivers/bluetooth/Makefile
++++ b/drivers/bluetooth/Makefile
+@@ -48,3 +48,4 @@ hci_uart-$(CONFIG_BT_HCIUART_QCA)	+= hci_qca.o
+ hci_uart-$(CONFIG_BT_HCIUART_AG6XX)	+= hci_ag6xx.o
+ hci_uart-$(CONFIG_BT_HCIUART_MRVL)	+= hci_mrvl.o
+ hci_uart-objs				:= $(hci_uart-y)
++obj-y  += bluesleep.o
+\ No newline at end of file
+diff --git a/drivers/bluetooth/bluesleep.c b/drivers/bluetooth/bluesleep.c
+new file mode 100644
+index 000000000000..6131d09ea069
+--- /dev/null
++++ b/drivers/bluetooth/bluesleep.c
+@@ -0,0 +1,376 @@
++#include <linux/module.h>	/* kernel module definitions */
++#include <linux/errno.h>
++#include <linux/init.h>
++#include <linux/interrupt.h>
++#include <linux/kernel.h>
++#include <linux/notifier.h>
++#include <linux/proc_fs.h>
++#include <linux/spinlock.h>
++#include <linux/timer.h>
++#include <linux/uaccess.h>
++#include <linux/version.h>
++#include <linux/workqueue.h>
++#include <linux/platform_device.h>
++#include <linux/irq.h>
++#include <linux/ioport.h>
++#include <linux/param.h>
++#include <linux/bitops.h>
++#include <linux/termios.h>
++#include <linux/gpio.h>
++#include <linux/of_gpio.h>
++#include <linux/serial_core.h>
++#include <net/bluetooth/bluetooth.h>
++#include <net/bluetooth/hci_core.h> /* event notifications */
++#include <linux/kobject.h>
++#include <linux/string.h>
++#include <linux/sysfs.h>
++#include <linux/gpio/consumer.h>
++
++#define BLUETOOTH_DRIVER_PWR_ON "ON"
++#define BLUETOOTH_DRIVER_PWR_OFF "OFF"      
++
++
++#define BLUETOOTH_DRIVER_WAKE_STATE     "WAKE"
++#define BLUETOOTH_DRIVER_SLEEP_STATE    "SLEEP"
++
++struct bluesleep_driver {
++    struct platform_device *pdev;
++    struct work_struct work;
++    spinlock_t lock;
++    struct gpio_desc *dev_wake_pin;
++    struct gpio_desc *reg_on_pin;
++    struct gpio_desc *host_wake_pin;
++    int hostwake_irq;
++    void (*power_on)(struct bluesleep_driver *priv, int power_on);
++    void (*wake_device)(struct bluesleep_driver *priv, int state);
++    int (*device_is_powered)(struct bluesleep_driver *priv);
++    int (*device_is_wake)(struct bluesleep_driver *priv);
++};
++
++#define to_bluesleep_driver_obj(x) container_of(x, struct bluesleep_driver, kobj)
++
++
++static void bluesleep_power_on_device(struct bluesleep_driver *priv, int power_on)
++{
++    if (!power_on) {
++        /* Set the reg_on_pin low to power off the device */
++        gpiod_set_value(priv->reg_on_pin, 0);
++        dev_info(&priv->pdev->dev, "Device powered off\n");
++        return;
++    }
++    else if (gpiod_get_value(priv->reg_on_pin) == 0) 
++    {
++        gpiod_set_value(priv->reg_on_pin, 1);
++        dev_info(&priv->pdev->dev, "Device powered on\n");
++    }
++}
++
++static int bluesleep_device_is_powered(struct bluesleep_driver *priv)
++{
++    /* Check if the device is powered on by reading the reg_on_pin */
++    return gpiod_get_value(priv->reg_on_pin);
++}
++
++
++static void bluesleep_wake_device(struct bluesleep_driver *priv, int state)
++{
++    if (state) {
++        /* Device is waking up, set the dev_wake_pin high */
++        gpiod_set_value(priv->dev_wake_pin, 1);
++        dev_info(&priv->pdev->dev, "Force Wake up the device\n");
++    } else {
++        /* Device is going to sleep, set the dev_wake_pin low */
++        gpiod_set_value(priv->dev_wake_pin, 0);
++        dev_info(&priv->pdev->dev, "Force Sleep the device\n");
++    }
++}   
++
++
++static int bluesleep_device_is_wake(struct bluesleep_driver *priv)
++{
++    /* Check if the device is powered on by reading the dev_wake_pin */
++    return gpiod_get_value(priv->dev_wake_pin);
++}
++
++
++static ssize_t power_state_show(struct kobject *kobj, struct kobj_attribute *attr,
++			char *buf)
++{
++    struct bluesleep_driver *priv = (struct bluesleep_driver *)dev_get_drvdata(kobj_to_dev(kobj));
++    int power_state;
++    int ret;
++
++    power_state  = priv->device_is_powered(priv);
++    printk(KERN_INFO "Debug 5\r\n");
++
++    if (power_state) {
++        ret = snprintf(buf, PAGE_SIZE, "%s", BLUETOOTH_DRIVER_PWR_ON);
++    }
++    else {
++        ret = snprintf(buf, PAGE_SIZE, "%s", BLUETOOTH_DRIVER_PWR_OFF);
++    }
++
++    printk(KERN_INFO "Debug 3\r\n");
++    if (ret < 0) {
++        printk(KERN_ERR "Failed to write power state to buffer\n");
++    }   
++	return ret;
++}
++
++static ssize_t power_state_store(struct kobject *kobj, struct kobj_attribute *attr,
++			 const char *buf, size_t count)
++{
++    struct bluesleep_driver *priv = (struct bluesleep_driver *)dev_get_drvdata(kobj_to_dev(kobj));
++	int power_ctrl, ret;
++
++	ret = kstrtoint(buf, 10, &power_ctrl);
++	if (ret < 0)
++		return ret;
++
++	priv->power_on(priv, power_ctrl);
++	return count;
++}
++
++static ssize_t wake_state_show(struct kobject *kobj, struct kobj_attribute *attr,
++			char *buf)
++{
++    struct bluesleep_driver *priv = (struct bluesleep_driver *)dev_get_drvdata(kobj_to_dev(kobj));
++
++    if (priv->device_is_wake(priv)) {
++        return sprintf(buf, "%s\n", BLUETOOTH_DRIVER_WAKE_STATE);
++    }
++
++    /* Return the power state */
++	return sprintf(buf, "%s\n", BLUETOOTH_DRIVER_SLEEP_STATE);
++}
++
++static ssize_t wake_state_store(struct kobject *kobj, struct kobj_attribute *attr,
++			 const char *buf, size_t count)
++{
++    struct bluesleep_driver *priv = (struct bluesleep_driver *)dev_get_drvdata(kobj_to_dev(kobj));
++	int wake_state_ctrl, ret;
++
++	ret = kstrtoint(buf, 10, &wake_state_ctrl);
++	if (ret < 0)
++		return ret;
++
++	priv->wake_device(priv, wake_state_ctrl);
++	return count;
++}
++
++
++static struct kobj_attribute power_state_attribute  =
++	__ATTR(power_state, 0664, power_state_show, power_state_store);
++
++
++static struct kobj_attribute wake_state_attribute  =
++	__ATTR(wake_state, 0664, wake_state_show, wake_state_store);
++
++static struct attribute *bluesleep_attrs[] = {
++    &power_state_attribute.attr,
++    &wake_state_attribute.attr,
++    NULL, /* need to NULL terminate the list of attributes */
++};
++
++static struct attribute_group bluesleep_attr_group = {
++	.attrs = bluesleep_attrs,
++};
++
++static irqreturn_t bluesleep_host_wake_handler(int irq, void *dev_data)
++{
++    struct bluesleep_driver *priv = dev_data;
++    unsigned long flags;
++
++    /* Acquire lock to protect shared data */
++    spin_lock_irqsave(&priv->lock, flags);
++
++
++    /* Release lock */
++    spin_unlock_irqrestore(&priv->lock, flags);
++
++
++	return IRQ_HANDLED;
++}
++
++
++static int bluesleep_probe(struct platform_device *pdev)
++{
++    struct device *dev = &pdev->dev;
++    struct bluesleep_driver *priv = NULL;
++    int ret;
++    dev_info(dev, "Probing Bluesleep driver\n");
++
++    /* Check if the device tree node is present */
++    if (!dev->of_node) {
++        dev_err(dev, "Device tree node not found\n");
++        return -ENODEV;
++    }
++
++    /* Allocate memory for the bluesleep driver private data */
++    priv = devm_kzalloc(dev, sizeof(struct bluesleep_driver), GFP_KERNEL);
++    if (!priv) {
++        dev_err(dev, "Failed to allocate memory for bluesleep driver\n");
++        return -ENOMEM;
++    }
++    platform_set_drvdata(pdev, priv);
++    dev_set_drvdata(dev, priv);
++    priv->pdev = pdev;
++
++    priv->dev_wake_pin = devm_gpiod_get_optional(dev, "device-wakeup", GPIOD_OUT_LOW);
++    if (IS_ERR_OR_NULL(priv->dev_wake_pin)) {
++        dev_err(dev, "Failed to get device-wake GPIO\n");
++        ret = PTR_ERR(priv->dev_wake_pin);
++        goto free_priv;
++    }
++
++    priv->reg_on_pin = devm_gpiod_get_optional(dev, "shutdown", GPIOD_OUT_LOW);
++    if (IS_ERR_OR_NULL(priv->reg_on_pin)) {
++        dev_err(dev, "Failed to get shutdown GPIO\n");
++        ret = PTR_ERR(priv->reg_on_pin);
++        goto free_priv;
++    }
++
++    priv->host_wake_pin = devm_gpiod_get_optional(dev, "host-wakeup", GPIOD_IN);
++    if (IS_ERR_OR_NULL(priv->host_wake_pin)) {
++        dev_err(dev, "Failed to get host-wake GPIO\n");
++        ret = PTR_ERR(priv->host_wake_pin);
++        goto free_priv;
++    }
++
++    priv->hostwake_irq = gpiod_to_irq(priv->host_wake_pin);
++    if (priv->hostwake_irq < 0) {
++        dev_err(dev, "Failed to get host-wake IRQ\n");
++        ret = priv->hostwake_irq;
++        goto free_priv;
++    }
++    ret = devm_request_threaded_irq(dev, priv->hostwake_irq, NULL,
++                                    bluesleep_host_wake_handler,
++                                    IRQF_TRIGGER_RISING | IRQF_ONESHOT,
++                                    "bluesleep_host_wake", priv);
++    if (ret) {
++        dev_err(dev, "Failed to request host-wake IRQ: %d\n", ret);
++        goto free_priv;
++    }
++    //Register this interrupt handler
++    ret = enable_irq_wake(priv->hostwake_irq);
++    if (ret) {
++        dev_err(dev, "Failed to enable IRQ wake: %d\n", ret);
++        goto free_priv;
++    }
++
++    /* Set the power on and wake device functions */
++    priv->power_on = bluesleep_power_on_device;
++    priv->wake_device = bluesleep_wake_device;
++    priv->device_is_powered = bluesleep_device_is_powered;
++    priv->device_is_wake = bluesleep_device_is_wake;
++
++	/* Create the files associated with this kobject */
++	ret = sysfs_create_group(&priv->pdev->dev.kobj, &bluesleep_attr_group);
++	if (ret)
++		goto free_priv;
++
++    /* Power off the device */
++    priv->power_on(priv, 0); // Power off the device
++    /* Sleep the device */
++    priv->wake_device(priv, 0); // Sleep the device
++
++    /* Initialize the HCI device */
++    spin_lock_init(&priv->lock);    
++
++    dev_info(dev, "Bluesleep driver probed\n");
++    return 0;
++free_priv:
++    devm_kfree(dev, priv);
++    priv = NULL;
++    dev_err(dev, "Failed to probe Bluesleep driver\n");
++    return ret;
++
++}
++
++static int bluesleep_remove(struct platform_device *pdev)
++{
++    struct device *dev = &pdev->dev;
++    struct bluesleep_driver *priv = platform_get_drvdata(pdev);
++    dev_info(dev, "Bluesleep driver removed\n");
++    disable_irq_wake(priv->hostwake_irq);
++    free_irq(priv->hostwake_irq, priv);
++    gpiod_set_value(priv->dev_wake_pin, 0); // Set dev_wake_pin low
++    gpiod_set_value(priv->reg_on_pin, 0); // Set reg_on_pin low
++    /* Remove the sysfs attributes */
++    sysfs_remove_group(&priv->pdev->dev.kobj, &bluesleep_attr_group);
++    /* Free the GPIOs */
++    if (priv->dev_wake_pin)
++        gpiod_put(priv->dev_wake_pin);
++    if (priv->reg_on_pin)   
++        gpiod_put(priv->reg_on_pin);
++    if (priv->host_wake_pin)
++        gpiod_put(priv->host_wake_pin);
++    devm_kfree(dev, priv);    
++    platform_set_drvdata(pdev, NULL);
++    dev_set_drvdata(dev, NULL);
++    platform_device_unregister(pdev); 
++    return 0;
++}
++
++#ifdef CONFIG_PM_SLEEP
++static int bluesleep_suspend(struct platform_device *pdev, pm_message_t state)
++{
++    dev_info(&pdev->dev, "Bluesleep driver suspended\n");
++    return 0;
++}
++
++static int bluesleep_resume(struct platform_device *pdev)
++{
++    dev_info(&pdev->dev, "Bluesleep driver resumed\n");
++    return 0;
++}
++#else
++static int bluesleep_suspend(struct platform_device *pdev, pm_message_t state) {}
++static int bluesleep_resume(struct platform_device *pdev) {} 
++#endif
++
++static struct of_device_id bluesleep_match_table[] = {
++	{ .compatible = "pta,bluesleep" },
++	{}
++};
++
++static struct platform_driver bluesleep_driver = {
++	.probe = bluesleep_probe,
++	.remove = bluesleep_remove,
++	.suspend = bluesleep_suspend,
++	.resume = bluesleep_resume,
++	.driver = {
++		.name = "bluesleep",
++		.owner = THIS_MODULE,
++		.of_match_table = bluesleep_match_table,
++	},
++};
++
++
++static int __init bluesleep_init(void)
++{
++    int ret;
++    /* Initialization code for the bluesleep driver */
++    pr_info("Bluesleep driver initialized\n");
++    ret = platform_driver_register(&bluesleep_driver);
++    if (ret) {
++        pr_err("Failed to register bluesleep driver: %d\n", ret);
++        return ret;
++    }
++    pr_info("Bluesleep driver registered successfully\n");
++    return 0;
++}
++
++
++static void __exit bluesleep_exit(void)
++{
++    /* Cleanup code for the bluesleep driver */
++    pr_info("Bluesleep driver exited\n");
++    platform_driver_unregister(&bluesleep_driver);
++}
++
++module_init(bluesleep_init);
++module_exit(bluesleep_exit);
++MODULE_LICENSE("GPL");
++MODULE_DESCRIPTION("Bluesleep Bluetooth Driver");
++MODULE_AUTHOR("Pham Tuan Anh <lambogini1992@gmail.com>");
+\ No newline at end of file
+-- 
+2.43.0
+
